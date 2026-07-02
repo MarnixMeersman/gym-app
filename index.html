@@ -202,6 +202,7 @@ function finish(){
   const A=S.active,M=allEx();
   A.ex.forEach(ax=>{const e=M[ax.id],p=P(ax.id);const done=ax.sets.filter(s=>s.ok);
     if(!done.length)return;
+    p.w=Math.max(...done.map(s=>+s.w||0)); /* adopt the weight actually lifted as the new baseline */
     const allTop=done.length>=e.sets&&done.every(s=>s.r>=e.hi);
     const allBottom=done.every(s=>s.r>=e.lo);
     if(allTop&&e.inc){p.w=+(p.w+e.inc).toFixed(2);p.fail=0;}
