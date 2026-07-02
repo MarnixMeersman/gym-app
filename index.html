@@ -145,9 +145,10 @@ function targets(){const b=bw(),m=b*31,f=S.phase==="gain"?1.07:0.85;
 const main=document.getElementById("main");
 document.getElementById("hdrDate").textContent=new Date().toDateString();
 let view="home";
-document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{view=b.dataset.v;
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{view=b.dataset.v;detailEx=null;
   document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("on",x===b));render();});
 function render(){ if(S.active) return renderSession();
+  if(view==="hist"&&detailEx) return renderExDetail();
   ({home:renderHome,log:renderLog,hist:renderHist,set:renderSet})[view](); }
 
 function renderHome(){
@@ -259,10 +260,47 @@ function spark(vals){if(vals.length<2)return "";const min=Math.min(...vals),max=
   const pts=vals.map((v,i)=>`${(i/(vals.length-1)*100).toFixed(1)},${(60-(v-min)/r*52-4).toFixed(1)}`).join(" ");
   return `<svg class="spark" viewBox="0 0 100 64" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="#FFB000" stroke-width="1.5"/></svg>`;}
 /* ============ HISTORY ============ */
+let detailEx=null;
+function showEx(id){detailEx=id;render();}
+const e1rm=(w,r)=>!w||!r?0:+(r<=1?w:w*(1+r/30)).toFixed(1); /* Epley */
+function exPoints(id){const pts=[];S.sessions.forEach(s=>{const ax=s.ex.find(e=>e.id===id);if(!ax)return;
+  const done=ax.sets.filter(x=>x.ok);if(!done.length)return;
+  pts.push({d:s.d,w:Math.max(...done.map(x=>+x.w||0)),e:Math.max(...done.map(x=>e1rm(+x.w||0,+x.r||0)))});});
+  return pts;}
+function exChart(pts){
+  if(pts.length<2)return '<div class="note">Log this exercise in at least two sessions to see a trend.</div>';
+  const W=320,H=150,padL=34,padR=10,padT=12,padB=18;
+  const vals=pts.flatMap(p=>[p.w,p.e]);let lo=Math.min(...vals),hi=Math.max(...vals);
+  if(hi-lo<1){hi+=2.5;lo=Math.max(0,lo-2.5);}
+  const X=i=>padL+(W-padL-padR)*i/(pts.length-1), Y=v=>padT+(H-padT-padB)*(1-(v-lo)/(hi-lo));
+  const line=k=>pts.map((p,i)=>`${X(i).toFixed(1)},${Y(p[k]).toFixed(1)}`).join(" ");
+  const grid=[0,.5,1].map(f=>{const v=lo+(hi-lo)*f,y=Y(v).toFixed(1);
+    return `<line x1="${padL}" x2="${W-padR}" y1="${y}" y2="${y}" stroke="#2A343E"/><text x="${padL-4}" y="${+y+3}" text-anchor="end" font-size="8" fill="#7A8794">${Math.round(v)}</text>`}).join("");
+  const dots=(k,c)=>pts.map((p,i)=>`<circle cx="${X(i).toFixed(1)}" cy="${Y(p[k]).toFixed(1)}" r="3" fill="${c}" stroke="#171D23" stroke-width="1.5"/>`).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${grid}
+    <polyline points="${line('e')}" fill="none" stroke="#7BC96F" stroke-width="2" stroke-dasharray="5 4" opacity=".9"/>
+    <polyline points="${line('w')}" fill="none" stroke="#FFB000" stroke-width="2"/>
+    ${dots('e','#7BC96F')}${dots('w','#FFB000')}
+    <text x="${padL}" y="${H-4}" font-size="8" fill="#7A8794">${pts[0].d}</text>
+    <text x="${W-padR}" y="${H-4}" text-anchor="end" font-size="8" fill="#7A8794">${pts[pts.length-1].d}</text></svg>`;
+}
+function renderExDetail(){
+  const M=allEx(),e=M[detailEx],p=P(detailEx),pts=exPoints(detailEx),last=pts[pts.length-1];
+  main.innerHTML=`<button class="small" onclick="showEx(null)">← All exercises</button>
+  <div class="readout" style="margin-top:10px"><div class="name">${e?e.nm:detailEx}</div>
+    <div class="code" style="font-size:40px">${p.w} kg</div>
+    <div class="sub">next prescription${last?` · last top set ${last.w} kg · est. 1RM ${last.e} kg`:""}</div></div>
+  <div class="card"><h2>Timeline</h2>
+    <div class="note" style="margin-bottom:6px"><span style="color:#FFB000">━</span> Top set kg&ensp;<span style="color:#7BC96F">╌╌</span> Est. 1RM kg (Epley: w × (1 + reps/30))</div>
+    ${exChart(pts)}</div>
+  <div class="card"><h2>Sessions (${pts.length})</h2>${
+    pts.slice().reverse().map(x=>`<div class="stat"><span>${x.d}</span><span><b>${x.w} kg</b> · e1RM ${x.e} kg</span></div>`).join("")||'<div class="note">No completed sets logged yet.</div>'
+  }</div>`;
+}
 function renderHist(){
   const M=allEx();
-  main.innerHTML=`<div class="card"><h2>Progression state</h2>${
-    Object.entries(S.prog).map(([id,p])=>`<div class="stat"><span>${M[id]?M[id].nm:id}</span><span><b>${p.w} kg</b>${p.fail?` <span class="dn">fail×${p.fail}</span>`:""}</span></div>`).join("")||'<div class="note">Finish your first session to populate.</div>'
+  main.innerHTML=`<div class="card"><h2>Progression state · tap for timeline</h2>${
+    Object.entries(S.prog).map(([id,p])=>`<div class="stat" style="cursor:pointer" onclick="showEx('${id}')"><span>${M[id]?M[id].nm:id}</span><span><b>${p.w} kg</b>${p.fail?` <span class="dn">fail×${p.fail}</span>`:""} <span style="color:#7A8794">›</span></span></div>`).join("")||'<div class="note">Finish your first session to populate.</div>'
   }</div>
   <div class="card"><h2>Sessions (${S.sessions.length})</h2>${
     S.sessions.slice().reverse().slice(0,30).map(s=>`<div class="hist"><b>${s.code}</b><span class="d">${s.d}</span> · ${s.ex.reduce((a,e)=>a+e.sets.filter(x=>x.ok).length,0)} sets</div>`).join("")||'<div class="note">Nothing yet. Go lift.</div>'
