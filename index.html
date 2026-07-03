@@ -107,7 +107,7 @@ const PROGRAM = [
   {id:"rdl",    nm:"Romanian Deadlift",       sets:3, lo:8,  hi:10, inc:2.5, w:70},
   {id:"lpress", nm:"Leg Press",               sets:3, lo:10, hi:12, inc:5.0, w:120},
   {id:"lcurl",  nm:"Lying Leg Curl",          sets:3, lo:10, hi:15, inc:2.5, w:35},
-  {id:"calf",   nm:"Standing Calf Raise",     sets:4, lo:10, hi:15, inc:5.0, w:60},
+  {id:"hyper",  nm:"45° Hyperextension",      sets:3, lo:10, hi:15, inc:2.5, w:0},
   {id:"hlr",    nm:"Hanging Leg Raise",       sets:3, lo:10, hi:15, inc:0,   w:0}]},
  {code:"UB", name:"Upper B · Vertical", ex:[
   {id:"ohpT",   nm:"Overhead Press · Top Set",sets:1, lo:3,  hi:5,  inc:2.5, w:45},
@@ -124,7 +124,7 @@ const PROGRAM = [
   {id:"hack",   nm:"Hack Squat / Front Squat",sets:3, lo:6,  hi:10, inc:2.5, w:60},
   {id:"lunge",  nm:"Walking Lunge (per leg)", sets:3, lo:10, hi:12, inc:2.0, w:16},
   {id:"scurl",  nm:"Seated Leg Curl",         sets:3, lo:12, hi:15, inc:2.5, w:40},
-  {id:"calf2",  nm:"Seated Calf Raise",       sets:4, lo:12, hi:20, inc:5.0, w:40},
+  {id:"hipthr", nm:"Hip Thrust",              sets:3, lo:8,  hi:12, inc:5.0, w:60},
   {id:"cablecr",nm:"Cable Crunch",            sets:3, lo:10, hi:15, inc:2.5, w:30}]},
  {code:"PC", name:"Pump + Conditioning (optional)", ex:[
   {id:"latr2",  nm:"DB Lateral Raise",        sets:4, lo:12, hi:20, inc:1.0, w:8},
@@ -137,12 +137,19 @@ const PROGRAM = [
 /* ============ STATE ============ */
 const KEY="ironlog_v1";
 let S = JSON.parse(localStorage.getItem(KEY)||"null") || {
-  q:0, prog:{}, sessions:[], weights:[], food:{}, sleep:[], bw:85, phase:"cut", active:null
+  q:0, prog:{}, names:{}, sessions:[], weights:[], food:{}, sleep:[], bw:85, phase:"cut", active:null
 };
 const save=()=>localStorage.setItem(KEY,JSON.stringify(S));
 const today=()=>new Date().toISOString().slice(0,10);
 const P=(exId)=>{ if(!S.prog[exId]){const e=allEx()[exId];S.prog[exId]={w:e.w,fail:0}} return S.prog[exId]; };
 function allEx(){const m={};PROGRAM.forEach(s=>s.ex.forEach(e=>m[e.id]=e));return m;}
+const exName=id=>(S.names&&S.names[id])||(allEx()[id]||{}).nm||id;
+function renameEx(id){const v=prompt("Rename exercise",exName(id));if(v===null)return;
+  S.names=S.names||{};const t=v.trim();
+  if(t&&t!==(allEx()[id]||{}).nm)S.names[id]=t;else delete S.names[id];
+  save();render();}
+/* drop progression entries for exercises no longer in the program */
+{let pruned=false;Object.keys(S.prog||{}).forEach(id=>{if(!allEx()[id]){delete S.prog[id];pruned=true}});if(pruned)save();}
 /* adaptive calorie target: bodyweight trend is the feedback signal (no food logging) */
 function bw(){return S.weights.length?S.weights[S.weights.length-1].kg:S.bw;}
 function protTarget(){return Math.round(bw()*2.2);}
@@ -202,7 +209,7 @@ function renderSession(){
   <div class="readout"><div class="code">${A.code}</div><div class="name">${s.name}</div>
   <div class="sub">Tap ✓ per set. Weights prefilled from progression engine.</div></div>`+
   A.ex.map((ax,xi)=>{const e=M[ax.id];return `<div class="ex">
-    <div class="ex-head"><span class="nm">${e.nm}</span><span class="tg">${e.sets}×${e.lo}–${e.hi}${e.inc?` · +${e.inc}kg`:``}</span></div>
+    <div class="ex-head"><span class="nm">${exName(ax.id)}</span><span class="tg">${e.sets}×${e.lo}–${e.hi}${e.inc?` · +${e.inc}kg`:``}</span></div>
     ${ax.sets.map((st,si)=>`<div class="set ${st.ok?'done':''}">
       <span class="n">S${si+1}</span>
       <input type="number" inputmode="decimal" value="${st.w}" placeholder="kg" onchange="upd(${xi},${si},'w',this.value)">
@@ -241,9 +248,8 @@ function finish(){
       hw=Math.max(hw,...d2.map(x=>+x.w||0));he=Math.max(he,...d2.map(x=>e1rm(+x.w||0,+x.r||0)));});
     if(!seen)return;
     const w=Math.max(...done.map(s=>+s.w||0)),e2=Math.max(...done.map(s=>e1rm(+s.w||0,+s.r||0)));
-    const nm=M[ax.id]?M[ax.id].nm:ax.id;
-    if(w>hw)prs.push(`${nm} — ${w} kg (was ${hw})`);
-    else if(e2>he)prs.push(`${nm} — e1RM ${e2} kg (was ${he})`);});
+    if(w>hw)prs.push(`${exName(ax.id)} — ${w} kg (was ${hw})`);
+    else if(e2>he)prs.push(`${exName(ax.id)} — e1RM ${e2} kg (was ${he})`);});
   A.ex.forEach(ax=>{const e=M[ax.id],p=P(ax.id);const done=ax.sets.filter(s=>s.ok);
     if(!done.length)return;
     p.w=Math.max(...done.map(s=>+s.w||0)); /* adopt the weight actually lifted as the new baseline */
@@ -324,9 +330,10 @@ function exChart(pts){
     <text x="${W-padR}" y="${H-4}" text-anchor="end" font-size="8" fill="#7A8794">${pts[pts.length-1].d}</text></svg>`;
 }
 function renderExDetail(){
-  const M=allEx(),e=M[detailEx],p=P(detailEx),pts=exPoints(detailEx),last=pts[pts.length-1];
-  main.innerHTML=`<button class="small" onclick="showEx(null)">← All exercises</button>
-  <div class="readout" style="margin-top:10px"><div class="name">${e?e.nm:detailEx}</div>
+  const p=P(detailEx),pts=exPoints(detailEx),last=pts[pts.length-1];
+  main.innerHTML=`<div class="row"><button class="small" onclick="showEx(null)">← All exercises</button>
+  <button class="small" onclick="renameEx('${detailEx}')">✎ Rename</button></div>
+  <div class="readout" style="margin-top:10px"><div class="name">${exName(detailEx)}</div>
     <div class="code" style="font-size:40px">${p.w} kg</div>
     <div class="sub">next prescription${last?` · last top set ${last.w} kg · est. 1RM ${last.e} kg`:""}</div></div>
   <div class="card"><h2>Timeline</h2>
@@ -340,22 +347,22 @@ const MUSCLE={benchT:{chest:1,triceps:.5},bench:{chest:1,triceps:.5},incdb:{ches
  csrow:{back:1,biceps:.5},crow:{back:1,biceps:.5},pdown:{back:1,biceps:.5},pullup:{back:1,biceps:.5},shrug:{back:1},shrug2:{back:1},
  ohpT:{shoulders:1,triceps:.5},ohp:{shoulders:1,triceps:.5},latr:{shoulders:1},latr2:{shoulders:1},rdelt:{shoulders:1},neckrow:{shoulders:1},
  ezcurl:{biceps:1},hcurl:{biceps:1},curl2:{biceps:1},tripd:{triceps:1},ohtri:{triceps:1},tri2:{triceps:1},
- squatT:{quads:1,hams:.5},squat:{quads:1,hams:.5},hack:{quads:1},lpress:{quads:1},lunge:{quads:1,hams:.5},
- rdl:{hams:1},dl:{hams:1,back:.5},lcurl:{hams:1},scurl:{hams:1},calf:{calves:1},calf2:{calves:1},hlr:{abs:1},cablecr:{abs:1}};
+ squatT:{quads:1,glutes:.5},squat:{quads:1,glutes:.5},hack:{quads:1},lpress:{quads:1},lunge:{quads:1,glutes:.5},
+ rdl:{hams:1,glutes:.5},dl:{hams:1,glutes:.5,back:.5},lcurl:{hams:1},scurl:{hams:1},hyper:{glutes:1,hams:.5},hipthr:{glutes:1},hlr:{abs:1},cablecr:{abs:1}};
 function weeklyVolume(){const cut=addDays(-7),tot={};
   S.sessions.filter(s=>s.d>cut).forEach(s=>s.ex.forEach(ax=>{const m=MUSCLE[ax.id];if(!m)return;
     const n=ax.sets.filter(x=>x.ok).length;Object.entries(m).forEach(([g,f])=>tot[g]=(tot[g]||0)+n*f);}));
   return tot;}
 function renderHist(){
-  const M=allEx(),vol=weeklyVolume();
-  const GROUPS=["chest","back","shoulders","biceps","triceps","quads","hams","calves","abs"];
+  const vol=weeklyVolume();
+  const GROUPS=["chest","back","shoulders","biceps","triceps","quads","hams","glutes","abs"];
   main.innerHTML=`<div class="card"><h2>Weekly volume · hard sets, last 7 days</h2>${
     GROUPS.map(g=>{const v=+(vol[g]||0).toFixed(1),c=v>16?"#E4572E":v>=10?"#7BC96F":"#7A8794";
       return `<div class="stat"><span style="text-transform:capitalize">${g}</span><span><b style="color:${c}">${v}</b></span></div>
       <div class="vbar"><div style="width:${(Math.min(v,20)/20*100).toFixed(0)}%;background:${c}"></div></div>`}).join("")}
     <div class="note">Zone for the big groups: 10–16 sets/week. Grey = room for more, green = in the zone, red = watch recovery. Compounds credit secondary muscles at half a set.</div></div>
   <div class="card"><h2>Progression state · tap for timeline</h2>${
-    Object.entries(S.prog).map(([id,p])=>`<div class="stat" style="cursor:pointer" onclick="showEx('${id}')"><span>${M[id]?M[id].nm:id}</span><span><b>${p.w} kg</b>${p.fail?` <span class="dn">fail×${p.fail}</span>`:""} <span style="color:#7A8794">›</span></span></div>`).join("")||'<div class="note">Finish your first session to populate.</div>'
+    Object.entries(S.prog).map(([id,p])=>`<div class="stat" style="cursor:pointer" onclick="showEx('${id}')"><span>${exName(id)}</span><span><b>${p.w} kg</b>${p.fail?` <span class="dn">fail×${p.fail}</span>`:""} <span style="color:#7A8794">›</span></span></div>`).join("")||'<div class="note">Finish your first session to populate.</div>'
   }</div>
   <div class="card"><h2>Sessions (${S.sessions.length})</h2>${
     S.sessions.slice().reverse().slice(0,30).map(s=>`<div class="hist"><b>${s.code}</b><span class="d">${s.d}</span> · ${s.ex.reduce((a,e)=>a+e.sets.filter(x=>x.ok).length,0)} sets</div>`).join("")||'<div class="note">Nothing yet. Go lift.</div>'
