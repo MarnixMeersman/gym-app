@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#0F1317">
 <title>IRONLOG</title>
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
 :root{
   --bg:#0F1317; --panel:#171D23; --panel2:#1E262E; --line:#2A343E;
@@ -59,6 +60,7 @@ label{font-size:11px;color:var(--dim);display:block;margin:8px 0 4px;text-transf
 .ex-head{background:var(--panel2);padding:10px 12px;display:flex;justify-content:space-between;align-items:center}
 .ex-head .nm{font-family:var(--cond);font-size:17px;text-transform:uppercase;letter-spacing:.04em}
 .ex-head .tg{font-size:11px;color:var(--dim)}
+.exlast{padding:5px 12px;font-size:11px;color:var(--dim);background:var(--panel2);border-top:1px dashed var(--line)}
 .set{display:grid;grid-template-columns:34px 1fr 1fr 44px;gap:8px;align-items:center;padding:8px 12px;border-top:1px solid var(--line)}
 .set .n{color:var(--dim);font-size:12px}
 .set input{padding:8px;text-align:center}
@@ -69,6 +71,10 @@ nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--panel);
 nav button{border:none;border-radius:0;background:none;color:var(--dim);font-size:11px;padding:10px 0;
   text-transform:uppercase;letter-spacing:.06em}
 nav button.on{color:var(--amber)}
+.updbanner{position:fixed;left:12px;right:12px;bottom:calc(64px + env(safe-area-inset-bottom) + 8px);
+  z-index:20;background:var(--panel2);border:1px solid var(--amber);border-radius:10px;
+  padding:10px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px;
+  font-family:var(--cond);letter-spacing:.08em;color:var(--amber)}
 .spark{width:100%;height:64px;margin-top:6px}
 .hist{padding:9px 0;border-bottom:1px dashed var(--line);font-size:12px}
 .hist b{font-family:var(--cond);font-size:15px;color:var(--amber);text-transform:uppercase;margin-right:8px}
@@ -90,6 +96,8 @@ textarea{width:100%;height:90px;background:var(--bg);color:var(--ink);border:1px
   <button data-v="set">Setup</button>
 </nav>
 <script>
+/* bump on every deploy, together with the cache name in sw.js */
+const APP_VERSION="v6 · 2026-07-18";
 /* ============ PROGRAM ============ */
 const PROGRAM = [
  {code:"UA", name:"Upper A · Horizontal", ex:[
@@ -148,8 +156,15 @@ function renameEx(id){const v=prompt("Rename exercise",exName(id));if(v===null)r
   S.names=S.names||{};const t=v.trim();
   if(t&&t!==(allEx()[id]||{}).nm)S.names[id]=t;else delete S.names[id];
   save();render();}
+/* defaults for state loaded from older versions of the app (or imported old JSON) */
+function migrate(){
+  S.sessions=S.sessions||[];S.prog=S.prog||{};S.weights=S.weights||[];
+  S.sleep=S.sleep||[];S.names=S.names||{};S.phase=S.phase||"cut";
+  S.sex=(S.sex==="f")?"f":"m";
+  if(typeof S.q!=="number")S.q=0;
+}
 /* drop progression entries for exercises no longer in the program */
-{let pruned=false;Object.keys(S.prog||{}).forEach(id=>{if(!allEx()[id]){delete S.prog[id];pruned=true}});if(pruned)save();}
+{migrate();let pruned=false;Object.keys(S.prog||{}).forEach(id=>{if(!allEx()[id]){delete S.prog[id];pruned=true}});save();}
 /* adaptive calorie target: bodyweight trend is the feedback signal (no food logging) */
 function bw(){return S.weights.length?S.weights[S.weights.length-1].kg:S.bw;}
 function protTarget(){return Math.round(bw()*2.2);}
@@ -179,6 +194,8 @@ function renderHome(){
     <div class="code">${s.code}</div>
     <div class="name">${s.name}</div>
     <div class="sub">${s.ex.length} exercises · double progression · ${last?("last session "+last.d):"no sessions yet"}</div>
+    ${(()=>{const cut=s.ex.filter(e=>recW(e.id)!==P(e.id).w).length;
+      return cut?`<div class="sub dn">layoff detected — prefill weights reduced on ${cut} exercise${cut>1?"s":""}</div>`:``})()}
     <div class="queue">${PROGRAM.map((p,i)=>`<div class="${i===S.q?'on':''}">${p.code}</div>`).join("")}</div>
     <div class="row" style="margin-top:12px">
       <button class="primary" onclick="startSession()">Start session</button>
@@ -200,7 +217,7 @@ function renderHome(){
 function skip(){S.q=(S.q+1)%PROGRAM.length;save();render();}
 function startSession(){
   const s=PROGRAM[S.q];
-  S.active={code:s.code,d:today(),ex:s.ex.map(e=>({id:e.id,sets:Array.from({length:e.sets},()=>({w:P(e.id).w,r:"",ok:false}))}))};
+  S.active={code:s.code,d:today(),ex:s.ex.map(e=>({id:e.id,sets:Array.from({length:e.sets},()=>({w:recW(e.id),r:"",ok:false}))}))};
   save();render();
 }
 function renderSession(){
@@ -208,8 +225,13 @@ function renderSession(){
   main.innerHTML=`<div id="restbar" class="restbar" style="display:none"></div>
   <div class="readout"><div class="code">${A.code}</div><div class="name">${s.name}</div>
   <div class="sub">Tap ✓ per set. Weights prefilled from progression engine.</div></div>`+
-  A.ex.map((ax,xi)=>{const e=M[ax.id];return `<div class="ex">
+  A.ex.map((ax,xi)=>{const e=M[ax.id],ll=lastLift(ax.id),pw=P(ax.id).w,rw=recW(ax.id);
+    const info=!ll?`first time — start ${pw} kg`
+      :`last: ${ll.d} · ${setsStr(ll.sets)} · ${ll.days}d ago`
+       +(rw!==pw?` <span class="dn">· layoff −${Math.round((1-layoffFactor(ll.days))*100)}% → ${rw} kg</span>`:``);
+    return `<div class="ex">
     <div class="ex-head"><span class="nm">${exName(ax.id)}</span><span class="tg">${e.sets}×${e.lo}–${e.hi}${e.inc?` · +${e.inc}kg`:``}</span></div>
+    <div class="exlast">${info}</div>
     ${ax.sets.map((st,si)=>`<div class="set ${st.ok?'done':''}">
       <span class="n">S${si+1}</span>
       <input type="number" inputmode="decimal" value="${st.w}" placeholder="kg" onchange="upd(${xi},${si},'w',this.value)">
@@ -306,11 +328,83 @@ function spark(vals){if(vals.length<2)return "";const min=Math.min(...vals),max=
 let detailEx=null;
 function showEx(id){detailEx=id;render();}
 const e1rm=(w,r)=>!w||!r?0:+(r<=1?w:w*(1+r/30)).toFixed(1); /* Epley */
+const daysBetween=(a,b)=>Math.round((new Date(b)-new Date(a))/864e5);
+const round25=w=>Math.round(w/2.5)*2.5; /* same rounding as the fail-deload */
+/* most recent session with at least one completed set of this exercise */
+function lastLift(id){
+  for(let i=S.sessions.length-1;i>=0;i--){
+    const ax=S.sessions[i].ex.find(e=>e.id===id);if(!ax)continue;
+    const done=ax.sets.filter(x=>x.ok);if(!done.length)continue;
+    const top=done.reduce((a,x)=>(+x.w||0)>=(+a.w||0)?x:a);
+    return {d:S.sessions[i].d,w:+top.w||0,r:+top.r||0,sets:done,
+            days:daysBetween(S.sessions[i].d,today())};
+  }
+  return null;
+}
+/* layoff deload: the longer since this exercise was last trained, the bigger the cut */
+function layoffFactor(days){
+  if(days==null||days<=10)return 1;
+  if(days<=17)return .95;   /* ~2 weeks off */
+  if(days<=28)return .90;   /* ~3-4 weeks   */
+  return .85;               /* >4 weeks     */
+}
+/* today's recommended weight: progression weight × layoff factor. Never writes S.prog —
+   finish() adopts whatever was actually lifted, so the engine ramps back on its own. */
+function recW(id){
+  const w=P(id).w,ll=lastLift(id),f=ll?layoffFactor(ll.days):1;
+  return f===1?w:Math.max(0,round25(w*f));
+}
+/* completed sets as "70kg × 5,5,4" (or per-set w×r when weights differ) */
+function setsStr(sets){
+  const ws=[...new Set(sets.map(s=>+s.w||0))];
+  return ws.length===1?`${ws[0]} kg × ${sets.map(s=>+s.r||0).join(",")}`
+    :sets.map(s=>`${+s.w||0}×${+s.r||0}`).join(" · ");
+}
 function exPoints(id){const pts=[];S.sessions.forEach(s=>{const ax=s.ex.find(e=>e.id===id);if(!ax)return;
   const done=ax.sets.filter(x=>x.ok);if(!done.length)return;
   pts.push({d:s.d,w:Math.max(...done.map(x=>+x.w||0)),e:Math.max(...done.map(x=>e1rm(+x.w||0,+x.r||0)))});});
   let mx=0;pts.forEach((p,i)=>{p.pr=i>0&&p.e>mx;mx=Math.max(mx,p.e);});
   return pts;}
+/* aggregate lifetime stats for one exercise; null when never logged */
+function exStats(id){
+  const pts=exPoints(id);if(!pts.length)return null;
+  let reps=0,ton=0;
+  S.sessions.forEach(s=>{const ax=s.ex.find(e=>e.id===id);if(!ax)return;
+    ax.sets.filter(x=>x.ok).forEach(x=>{reps+=(+x.r||0);ton+=(+x.w||0)*(+x.r||0);});});
+  const first=pts[0],last=pts[pts.length-1],span=Math.max(1,daysBetween(first.d,last.d));
+  const bE=pts.reduce((a,p)=>p.e>a.e?p:a),bW=pts.reduce((a,p)=>p.w>a.w?p:a);
+  const rec=pts.filter(p=>p.d>=addDays(-90));
+  const rate=rec.length>=2&&daysBetween(rec[0].d,rec[rec.length-1].d)>0
+    ?+(((rec[rec.length-1].w-rec[0].w)/daysBetween(rec[0].d,rec[rec.length-1].d))*30.4).toFixed(1):null;
+  return {n:pts.length,bestW:bW.w,bestWd:bW.d,bestE:bE.e,bestEd:bE.d,
+    firstW:first.w,lastW:last.w,gain:+(last.w-first.w).toFixed(1),
+    gainPct:first.w?+((last.w-first.w)/first.w*100).toFixed(0):null,
+    reps,ton:Math.round(ton),rate,
+    perWeek:pts.length>1?+(pts.length/(span/7)).toFixed(1):null,
+    daysSince:daysBetween(last.d,today())};
+}
+/* Jeff Nippard "Noob to Freak" standards — est. 1RM as a multiple of bodyweight.
+   Arrays = upper bounds of Noob, Beginner, Intermediate, Advanced, Elite; above the last = Freak.
+   OHP has no published Nippard table — approximated at ~65% of bench, labeled as such. */
+const STD_LEVELS=["Noob","Beginner","Intermediate","Advanced","Elite","Freak"];
+const STD={
+ m:{squat:[.75,1.25,1.75,2.5,3], bench:[.5,1,1.5,2,2.5],    dl:[1,1.5,2.25,3,3.5],  ohp:[.33,.65,1,1.3,1.63]},
+ f:{squat:[.5,1,1.5,1.75,2.25],  bench:[.25,.5,.75,1,1.25], dl:[.75,1,1.75,2.5,3],  ohp:[.16,.33,.49,.65,.81]}};
+const LIFTS={squat:{ids:["squatT","squat"],nm:"Back Squat"},bench:{ids:["benchT","bench"],nm:"Bench Press"},
+             dl:{ids:["dl"],nm:"Deadlift"},ohp:{ids:["ohpT","ohp"],nm:"OHP (approx.)"}};
+const STD_MAP={benchT:"bench",bench:"bench",squatT:"squat",squat:"squat",dl:"dl",ohpT:"ohp",ohp:"ohp"};
+function bestE1(ids){let m=0;ids.forEach(id=>exPoints(id).forEach(p=>{if(p.e>m)m=p.e;}));return m;}
+function standardFor(lift){
+  const b=(STD[S.sex]||STD.m)[lift];if(!b)return null;
+  const e=bestE1(LIFTS[lift].ids),w=bw();
+  if(!e||!w)return null;
+  const ratio=e/w;
+  let lvl=0;b.forEach(x=>{if(ratio>=x)lvl++;});
+  const floor=lvl?b[lvl-1]:0,ceil=lvl<b.length?b[lvl]:null;
+  return {nm:LIFTS[lift].nm,e,w,ratio:+ratio.toFixed(2),lvl,label:STD_LEVELS[lvl],
+    next:ceil,nextKg:ceil?Math.ceil(ceil*w/2.5)*2.5:null,
+    pct:ceil?Math.max(0,Math.min(100,Math.round((ratio-floor)/(ceil-floor)*100))):100};
+}
 function exChart(pts){
   if(pts.length<2)return '<div class="note">Log this exercise in at least two sessions to see a trend.</div>';
   const W=320,H=150,padL=34,padR=10,padT=12,padB=18;
@@ -331,11 +425,26 @@ function exChart(pts){
 }
 function renderExDetail(){
   const p=P(detailEx),pts=exPoints(detailEx),last=pts[pts.length-1];
+  const st=exStats(detailEx),rw=recW(detailEx);
+  const std=STD_MAP[detailEx]?standardFor(STD_MAP[detailEx]):null;
   main.innerHTML=`<div class="row"><button class="small" onclick="showEx(null)">← All exercises</button>
   <button class="small" onclick="renameEx('${detailEx}')">✎ Rename</button></div>
   <div class="readout" style="margin-top:10px"><div class="name">${exName(detailEx)}</div>
     <div class="code" style="font-size:40px">${p.w} kg</div>
-    <div class="sub">next prescription${last?` · last top set ${last.w} kg · est. 1RM ${last.e} kg`:""}</div></div>
+    <div class="sub">next prescription${last?` · last top set ${last.w} kg · est. 1RM ${last.e} kg`:""}</div>
+    ${st?`<div class="sub">last performed ${st.daysSince}d ago${rw!==p.w?` · <span class="dn">today's rec ${rw} kg (layoff −${Math.round((1-layoffFactor(st.daysSince))*100)}%)</span>`:""}</div>`:""}
+    ${std?`<div style="margin-top:8px"><span class="pill" style="border-color:var(--amber);color:var(--amber)">${std.label} · ${std.ratio}×BW</span></div>`:""}</div>
+  ${st?`<div class="card"><h2>Stats</h2>
+    <div class="stat"><span>Best top set</span><span><b>${st.bestW} kg</b> <span class="d" style="color:var(--dim)">${st.bestWd}</span></span></div>
+    <div class="stat"><span>Best est. 1RM</span><span><b>${st.bestE} kg</b> <span style="color:var(--dim)">${st.bestEd}</span></span></div>
+    <div class="stat"><span>First → latest top set</span><span><b>${st.firstW} → ${st.lastW} kg</b> ${st.gain?`<span class="${st.gain>0?'up':'dn'}">${st.gain>0?"+":""}${st.gain} kg${st.gainPct!==null?` / ${st.gain>0?"+":""}${st.gainPct}%`:""}</span>`:""}</span></div>
+    <div class="stat"><span>Trend (last 90d)</span><span><b>${st.rate!==null?`${st.rate>0?"+":""}${st.rate}`:"–"}</b> kg/month</span></div>
+    <div class="stat"><span>Times performed</span><span><b>${st.n}</b>${st.perWeek?` · ${st.perWeek}×/wk`:""}</span></div>
+    <div class="stat"><span>Total reps</span><span><b>${st.reps}</b></span></div>
+    <div class="stat"><span>Total tonnage</span><span><b>${st.ton>=1000?(st.ton/1000).toFixed(1)+" t":st.ton+" kg"}</b></span></div>
+    ${std&&std.next?`<div class="stat"><span>Next level</span><span><b>${STD_LEVELS[std.lvl+1]}</b> at ${std.next}×BW ≈ ${std.nextKg} kg</span></div>
+    <div class="vbar"><div style="width:${std.pct}%;background:var(--amber)"></div></div>`:""}
+  </div>`:""}
   <div class="card"><h2>Timeline</h2>
     <div class="note" style="margin-bottom:6px"><span style="color:#FFB000">━</span> Top set kg&ensp;<span style="color:#7BC96F">╌╌</span> Est. 1RM kg (Epley: w × (1 + reps/30))</div>
     ${exChart(pts)}</div>
@@ -361,6 +470,13 @@ function renderHist(){
       return `<div class="stat"><span style="text-transform:capitalize">${g}</span><span><b style="color:${c}">${v}</b></span></div>
       <div class="vbar"><div style="width:${(Math.min(v,20)/20*100).toFixed(0)}%;background:${c}"></div></div>`}).join("")}
     <div class="note">Zone for the big groups: 10–16 sets/week. Grey = room for more, green = in the zone, red = watch recovery. Compounds credit secondary muscles at half a set.</div></div>
+  <div class="card"><h2>Strength standards</h2>${
+    Object.keys(LIFTS).map(k=>{const s=standardFor(k);
+      if(!s)return `<div class="stat"><span>${LIFTS[k].nm}</span><span style="color:var(--dim)">no data</span></div>`;
+      return `<div class="stat" style="cursor:pointer" onclick="showEx('${LIFTS[k].ids[0]}')"><span>${s.nm}</span><span><b>${s.label}</b> · ${s.ratio}×BW <span style="color:var(--dim)">›</span></span></div>
+      <div class="vbar"><div style="width:${s.pct}%;background:var(--amber)"></div></div>
+      <div class="note" style="margin:0 0 8px">${s.next?`e1RM ${s.e} kg · next: ${STD_LEVELS[s.lvl+1]} at ${s.next}×BW ≈ ${s.nextKg} kg`:`e1RM ${s.e} kg · top of the chart`}</div>`;}).join("")}
+    <div class="note">Jeff Nippard "Noob → Freak" standards (${S.sex==="f"?"female":"male"}) · best est. 1RM (Epley) ÷ current bodyweight · top-set and back-off history combined · OHP thresholds are an approximation (~65% of bench), not an official Nippard number. Change sex in Setup.</div></div>
   <div class="card"><h2>Progression state · tap for timeline</h2>${
     Object.entries(S.prog).map(([id,p])=>`<div class="stat" style="cursor:pointer" onclick="showEx('${id}')"><span>${exName(id)}</span><span><b>${p.w} kg</b>${p.fail?` <span class="dn">fail×${p.fail}</span>`:""} <span style="color:#7A8794">›</span></span></div>`).join("")||'<div class="note">Finish your first session to populate.</div>'
   }</div>
@@ -371,10 +487,17 @@ function renderHist(){
 /* ============ SETUP ============ */
 function renderSet(){
   main.innerHTML=`
+  <div class="card"><h2>App · ${APP_VERSION}</h2>
+    <button class="primary" onclick="backupAndRefresh()">Download all + refresh app</button>
+    <div class="note">Downloads a full JSON backup of your ${S.sessions.length} session${S.sessions.length===1?"":"s"}, then clears the app cache and pulls the newest version from the server. Training data is untouched — it lives in localStorage, not the cache.</div></div>
   <div class="card"><h2>Data</h2>
     <div class="row"><button onclick="expData()">Export JSON</button><button onclick="document.getElementById('imp').click()">Import JSON</button></div>
     <input id="imp" type="file" accept=".json" class="hide" onchange="impData(this)">
     <div class="note">All data lives on this device only (localStorage). Export regularly and stash the JSON wherever you like; nothing ever leaves your phone.</div></div>
+  <div class="card"><h2>Strength standards</h2>
+    <div class="row"><button class="${S.sex==='m'?'primary':''}" onclick="S.sex='m';save();render()">Male</button>
+    <button class="${S.sex==='f'?'primary':''}" onclick="S.sex='f';save();render()">Female</button></div>
+    <div class="note">Only used to pick the Jeff Nippard standards table in History (level = est. 1RM ÷ bodyweight).</div></div>
   <div class="card"><h2>Phase</h2>
     <div class="row"><button class="${S.phase==='cut'?'primary':''}" onclick="S.phase='cut';save();render()">Cut −15%</button>
     <button class="${S.phase==='gain'?'primary':''}" onclick="S.phase='gain';save();render()">Lean gain +7%</button></div>
@@ -386,10 +509,50 @@ function renderSet(){
 function expData(){const b=new Blob([JSON.stringify(S,null,1)],{type:"application/json"});
   const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="ironlog-"+today()+".json";a.click();}
 function impData(inp){const f=inp.files[0];if(!f)return;const r=new FileReader();
-  r.onload=()=>{try{S=JSON.parse(r.result);save();alert("Imported");render();}catch(e){alert("Invalid file")}};r.readAsText(f);}
+  r.onload=()=>{try{S=JSON.parse(r.result);migrate();save();alert("Imported");render();}catch(e){alert("Invalid file")}};r.readAsText(f);}
+/* backup first, then nuke the cache and pull the newest deploy */
+async function backupAndRefresh(){
+  if(!navigator.onLine&&!confirm("You look offline. Refreshing now may leave the app without cached files. Continue?"))return;
+  expData();
+  setTimeout(async()=>{ /* let the download click land before teardown */
+    try{
+      const keys=await caches.keys();
+      await Promise.all(keys.map(k=>caches.delete(k)));
+      const reg=await navigator.serviceWorker.getRegistration();
+      if(reg)await reg.update();
+    }catch(e){}
+    swRefreshing=true; /* suppress the controllerchange reload — we reload ourselves */
+    location.reload();
+  },600);
+}
 /* ============ BOOT ============ */
 render();
-if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+/* SW update flow: new versions install in the background, then wait for the user to
+   tap the banner (SKIP_WAITING) — controllerchange reloads exactly once. */
+let pendingSW=null,swRefreshing=false;
+if("serviceWorker" in navigator){
+  const hadController=!!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register("sw.js").then(reg=>{
+    if(reg.waiting&&hadController){pendingSW=reg.waiting;showUpdateBanner();}
+    reg.addEventListener("updatefound",()=>{
+      const w=reg.installing;if(!w)return;
+      w.addEventListener("statechange",()=>{
+        if(w.state==="installed"&&navigator.serviceWorker.controller){pendingSW=w;showUpdateBanner();}
+      });
+    });
+  });
+  navigator.serviceWorker.addEventListener("controllerchange",()=>{
+    if(swRefreshing||!hadController)return;
+    swRefreshing=true;location.reload();
+  });
+}
+function showUpdateBanner(){
+  if(document.getElementById("updBanner"))return;
+  const d=document.createElement("div");d.id="updBanner";d.className="updbanner";
+  d.innerHTML=`NEW VERSION READY <button class="small primary" onclick="applyUpdate()">Update now</button>`;
+  document.body.appendChild(d);
+}
+function applyUpdate(){pendingSW?pendingSW.postMessage("SKIP_WAITING"):location.reload();}
 </script>
 </body>
 </html>
